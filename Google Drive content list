@@ -1,0 +1,81 @@
+from google.colab import auth
+import pandas as pd
+from google.auth import default
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+import time
+
+class GoogleDriveHelper:
+    def __init__(self):
+        auth.authenticate_user()
+        credentials, project = default()
+        self.drive_service = build('drive', 'v3', credentials=credentials)
+
+    def list_all_files(self):
+        # Retrieve all files in the drive
+        files = []
+        page_token = None
+        while True:
+            try:
+                param = {}
+                if page_token:
+                    param['pageToken'] = page_token
+                response = self.drive_service.files().list(fields="nextPageToken, files(id, name, mimeType, size)", **param).execute()
+                files.extend(response.get('files', []))
+                page_token = response.get('nextPageToken')
+                if not page_token:
+                    break
+            except HttpError as error:
+                print(f'An error occurred: {error}')
+                break
+        return files
+
+# Authenticate user and create GoogleDriveHelper instance
+auth.authenticate_user()
+credentials, project = default()
+google_drive_helper = GoogleDriveHelper()
+
+# List all available files
+all_files = google_drive_helper.list_all_files()
+
+# Create an empty DataFrame to store the results
+df_results = pd.DataFrame(columns=['Title', 'Type', 'Size', 'Link'])
+
+# Retrieve details for all files
+for file in all_files:
+    file_name = file.get('name')
+    file_id = file.get('id')
+    file_type = file.get('mimeType', 'Unknown Type')
+    file_size = file.get('size', 'Unknown Size')
+    file_link = f"https://drive.google.com/file/d/{file_id}/view"
+
+    # Create a new DataFrame row and append it
+    new_row = pd.DataFrame([{
+        'Title': file_name,
+        'Type': file_type,
+        'Size': file_size,
+        'Link': file_link
+    }])
+    df_results = pd.concat([df_results, new_row], ignore_index=True)
+    print(f"Processed file: {file_name} | Type: {file_type} | Size: {file_size} | Link: {file_link}")
+
+import re
+
+def clean_illegal_chars(text):
+    # 定義 Excel 不允許的控制字符
+    illegal_chars = re.compile(r'[\000-\010]|[\013-\014]|[\016-\037]')
+    # 替換這些字符為空字符串
+    return illegal_chars.sub("", text)
+
+# 清洗 DataFrame 中所有字符串類型的欄位
+for col in df_results.columns:
+    if df_results[col].dtype == object:  # 只有字符串類型的欄位需要被清洗
+        df_results[col] = df_results[col].apply(clean_illegal_chars)
+
+# 現在嘗試再次保存到 Excel
+excel_file_path = 'all_drive_files_cleaned.xlsx'
+df_results.to_excel(excel_file_path, index=False)
+
+# 下載 Excel 檔案
+from google.colab import files
+files.download(excel_file_path)
